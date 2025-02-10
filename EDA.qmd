@@ -1,0 +1,100 @@
+---
+title: "Untitled"
+format: html
+editor: visual
+---
+
+```{r}
+suppressPackageStartupMessages({
+    library(curatedTCGAData)
+    library(TCGAutils)
+    library(ggplot2)
+    library(ggbeeswarm)
+})
+```
+
+# Load data
+
+```{r warning=FALSE, echo=FALSE, eval=FALSE}
+## From the paper (https://www.nature.com/articles/ncomms9971#Sec14) 
+sup1 <- readxl::read_excel("SupData1.xlsx", skip = 2)
+sup2 <- readxl::read_excel("SupData2.xlsx", skip = 2)
+
+supOV <- sup1 %>% filter(`Cancer type` == "OV")
+```
+
+## Extracted image features
+```{r}
+tcgaOV <- readxl::read_excel("TCGA_OV_feat_purity.xlsx")
+
+chrCols <- c("ESTIMATE", "ABSOLUTE", "LUMP", "CPE",
+             "num_nuclei", "benign_epithelial", "inflammatory", "necrotic",
+             "neoplastic", "no_label", "stromal")
+for (chrCol in chrCols) {tcgaOV[[chrCol]] <- as.numeric(tcgaOV[[chrCol]])}
+
+tcgaOV$purity_hovernet <- tcgaOV$neoplastic/tcgaOV$num_nuclei
+
+## reformat
+tcgaOV <- tcgaOV[-1]
+colnames(tcgaOV)[1] <- "patientID"
+```
+
+## curatedTCGAData
+```{r}
+ov <- curatedTCGAData(diseaseCode = "OV", assays = "*", version = "1.1.38", dry.run = FALSE)
+
+# sampleTables(ov)
+# getClinicalNames("OV")
+
+meta <- colData(ov) %>% as.data.frame
+```
+
+```{r}
+all <- dplyr::left_join(tcgaOV, meta, by = "patientID")
+```
+
+
+
+# Plot
+```{r fig.width=4.2, fig.height=5}
+n <- 3 # the number of unique values per attribute
+
+## Select metadata attributes
+numLv <- apply(all, 2, function(x) {length(unique(x))}) # integer vector: the number of unique values
+nLv <- which(numLv == n) # two levels most likely include `NA`
+# slideAttr <- colnames(all)[grep("slide", colnames(all))] # character vector: attributes most likely associated with the slide
+# nLvBatch <- intersect(names(nLv), slideAttr) # potential slide-associated attributes with `n` unique values
+# nonNAcount <- colSums(!is.na(all[nLvBatch])) %>% sort(., decreasing = TRUE)
+nonNAcount <- colSums(!is.na(all[nLv])) %>% sort(., decreasing = TRUE)
+nonNAcount <- nonNAcount[nonNAcount > round(nrow(all)/2)]
+
+## Factorize
+slideAttrNames <- names(nonNAcount)
+for (slideAttrName in slideAttrNames) {
+    all[[slideAttrName]] <- as.factor(all[[slideAttrName]])
+}
+
+## Plot
+for (slideAttrName in slideAttrNames) {
+    plot(all$ABSOLUTE, all$purity_hovernet, 
+     xlim = c(0,1), ylim = c(0,1),
+     col = all[[slideAttrName]],
+     main = slideAttrName)
+}
+```
+
+```{r fig.width=4.2, fig.height=3}
+## Beeswarm plot
+for (slideAttrName in slideAttrNames) {
+    p <- ggplot(all, aes(x = !!sym(slideAttrName), y = purity_hovernet)) + geom_beeswarm()
+    print(p)
+}
+```
+
+```{r}
+## Images are from more 'normal' side of the tumor?
+hist(tcgaOV$CPE)
+hist(tcgaOV$ABSOLUTE)
+hist(tcgaOV$purity_hovernet)
+```
+
