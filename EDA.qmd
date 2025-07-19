@@ -1,7 +1,16 @@
 ---
-title: "Untitled"
-format: html
-editor: visual
+title: "Check potential batch effects on TCGA image features"
+author: "Sehyun Oh"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+vignette: >
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteIndexEntry{Quickstart - RNAseq analysis using salmon}
+  %\VignetteEncoding{UTF-8}
+output:
+  BiocStyle::html_document:
+    number_sections: yes
+    toc: yes
+    toc_depth: 4
 ---
 
 ```{r}
@@ -10,6 +19,8 @@ suppressPackageStartupMessages({
     library(TCGAutils)
     library(ggplot2)
     library(ggbeeswarm)
+    library(dplyr)
+    library(viridis)
 })
 ```
 
@@ -24,6 +35,7 @@ supOV <- sup1 %>% filter(`Cancer type` == "OV")
 ```
 
 ## Extracted image features
+
 ```{r}
 tcgaOV <- readxl::read_excel("TCGA_OV_feat_purity.xlsx")
 
@@ -33,6 +45,10 @@ chrCols <- c("ESTIMATE", "ABSOLUTE", "LUMP", "CPE",
 for (chrCol in chrCols) {tcgaOV[[chrCol]] <- as.numeric(tcgaOV[[chrCol]])}
 
 tcgaOV$purity_hovernet <- tcgaOV$neoplastic/tcgaOV$num_nuclei
+tcgaOV$inflam_perc <- tcgaOV$inflammatory/tcgaOV$num_nuclei
+tcgaOV$strom_perc <- tcgaOV$stromal/tcgaOV$num_nuclei
+tcgaOV$benign_perc <- tcgaOV$benign_epithelial/tcgaOV$num_nuclei
+tcgaOV$necrot_perc <- tcgaOV$necrotic/tcgaOV$num_nuclei
 
 ## reformat
 tcgaOV <- tcgaOV[-1]
@@ -40,6 +56,7 @@ colnames(tcgaOV)[1] <- "patientID"
 ```
 
 ## curatedTCGAData
+
 ```{r}
 ov <- curatedTCGAData(diseaseCode = "OV", assays = "*", version = "1.1.38", dry.run = FALSE)
 
@@ -55,7 +72,26 @@ all <- dplyr::left_join(tcgaOV, meta, by = "patientID")
 
 
 
+
 # Plot
+## Purity directly
+```{r fig.width=4.2, fig.height=5}
+## Based on the potential sample quality
+all_quality <- all %>%
+    mutate(necrotic_prop = necrotic/num_nuclei*100) # proportion of necrotic cells
+
+# ## Create a function to generate a continuous color palette
+# rbPal <- colorRampPalette(c('red','blue'))
+# 
+# ## This adds a column of color values based on the `necrotic_prop`
+# all_quality$necrotic_prop <- rbPal(100)[as.numeric(cut(all_quality$necrotic_prop, breaks = 100))]
+
+plot(all_quality$ABSOLUTE, all_quality$purity_hovernet, 
+     xlim = c(0,1), ylim = c(0,1),
+     col = all_quality$necrotic_prop)
+```
+
+
 ```{r fig.width=4.2, fig.height=5}
 n <- 3 # the number of unique values per attribute
 
@@ -97,4 +133,37 @@ hist(tcgaOV$CPE)
 hist(tcgaOV$ABSOLUTE)
 hist(tcgaOV$purity_hovernet)
 ```
+
+# PCA
+```{r}
+imageFeat <- c("mean_intensity.1", "variance_intensity.1", "max_intensity.1", 
+               "min_intensity.1", "nearest_neighbor_distance.1")
+tcgaOV2 <- tcgaOV[!duplicated(tcgaOV$patientID),]
+pca_result <- prcomp(tcgaOV2[imageFeat], center = TRUE, scale. = TRUE)
+summary(pca_result)
+```
+
+## PCs
+```{r}
+pca_x <- pca_result$x
+sample_inds <- which(meta$patientID %in% tcgaOV2$patientID)
+pca_df <- cbind(meta[sample_inds,], pca_x)
+
+## Factorize
+for (slideAttrName in slideAttrNames) {
+    pca_df[[slideAttrName]] <- as.factor(pca_df[[slideAttrName]])
+}
+```
+
+```{r}
+## PCA plots
+for (slideAttrName in slideAttrNames[1]) {
+    p <- ggplot(pca_df, aes(x = PC3, y = PC2, color = !!sym(slideAttrName))) +
+        geom_point(size = 3) +
+        labs(x = "PC2", y = "PC3", color = slideAttrName) +
+        theme_minimal()
+    print(p)
+}
+```
+
 
