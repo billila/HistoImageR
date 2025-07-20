@@ -1,0 +1,38 @@
+---
+title: "Untitled"
+format: html
+editor: visual
+---
+
+```{r}
+library(zellkonverter)
+library(SingleCellExperiment)
+library(SpatialExperiment)
+library(rjson)
+```
+
+# H5AD files
+```{r}
+## Create SingleCellExperiment object that points to on-disk H5AD file
+h5ad_file <- "data/TCGA-13-A5FT-01Z-00-DX1.2B292DC8-7336-4CD9-AB1A-F6F482E6151A.h5ad"
+sce <- readH5AD(h5ad_file, use_hdf5 = TRUE, reader = "R")
+
+# Extract spatial coordinates (usually stored in adata.obsm["spatial"] in Python)
+spatialCoords <- as.matrix(reducedDim(sce, "spatial"))  # Assuming "spatial" reduced dimension
+colnames(spatialCoords) <- c("x_centroid", "y_centroid")
+
+# Create the SpatialExperiment object
+spe <- SpatialExperiment(
+    assays = assays(sce),
+    colData = colData(sce),
+    rowData = rowData(sce),
+    spatialCoords = spatialCoords
+)
+```
+
+Plot x-y coordinate
+```{r echo=FALSE, out.width="66%", fig.align="center"}
+par(mar = rep(0, 4))
+plot(spatialCoords(spe), cex = 0.1, pch = 16, asp = 1, axes = FALSE, 
+     xlab = "", ylab = "")
+```
