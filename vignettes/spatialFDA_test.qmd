@@ -35,6 +35,7 @@ library("SpatialExperiment")
 library("curatedTCGAData")
 library("png")
 library("jsonlite")
+source("~/Projects/imageTCGAAnalyses/R/cellListToSE.R")
 
 set.seed(1234)
 ```
@@ -51,33 +52,6 @@ ovmeta <- colData(ovmae)
 ```
 
 ### H&E image features
-```{r cellListToSE, echo=FALSE}
-#' @param x A list.
-#' 
-cellListToSE <- function(x) {
-    
-    ## Create SpatialExperiment object
-    se <- SpatialExperiment(
-        spatialCoords = do.call(rbind, lapply(x, function(x) x$centroid)),
-        colData = DataFrame(
-            cell_type = sapply(x, function(x) x$type),
-            type_prob = sapply(x, function(x) x$type_prob)
-        )
-    )
-    
-    ## Store segmentation polygons in metadata
-    metadata(se)$polygons <- lapply(x, function(x) x$contour)
-    metadata(se)$bboxes <- lapply(x, function(x) x$bbox)
-    
-    ## Update column names
-    colnames(spatialCoords(se)) <- c("x", "y") # spatialCoords slot
-    
-    ## Convert cell_type as factors
-    colData(se)$cell_type <- as.factor(colData(se)$cell_type) 
-    
-    return(se)
-}
-```
 
 ```{r eval=FALSE}
 datDir <- "~/Projects/imageTCGAAnalyses/data/demo_outputs/"
@@ -122,34 +96,6 @@ fnames <- c("TCGA-23-1121-01Z-00-DX1.E2F25441-32C3-46BF-A845-CB4FA787E8CB",
 pathToFiles <- "~/Projects/imageTCGAAnalyses/data/demo_outputs"
 ```
 
-
-
-```{r}
-patiendIDs <- stringr::str_extract(fnames, "TCGA-\\d{2}-\\d{4}")
-spelist <- vector(mode = "list", length = length(fnames))
-names(spelist) <- patiendIDs
-
-for (i in seq_along(fnames)) {
-    # pathToFiles <- "https://u24-cancer-genomics.seandavi.workers.dev/hovernet/TCGA_OV/json"
-    json_data <- fromJSON(file.path(pathToFiles, paste0(fnames[i], ".json")))
-    cells <- json_data[[2]]
-    randomSubset <- sample(seq_along(cells), round(length(cells)/10, 0)) # Use only 1/10 of cells for demo
-    spe <- cellListToSE(cells[sort(randomSubset)])
-    
-    ## Create SotredSpatialImage object (from local file)
-    image_file <- file.path(pathToFiles, paste0(fnames[i], ".png"))
-    spe <- addImg(spe, 
-                  imageSource = image_file,
-                  sample_id = "sample01",
-                  image_id = "h&e",
-                  scaleFactor = 1)
-    
-    spelist[i] <- spe
-}
-
-spes <- ExperimentList(spelist)
-```
-
 ```{r}
 plot(imgRaster(getImg(spes[[1]])))
 ```
@@ -158,38 +104,6 @@ plot(imgRaster(getImg(spes[[1]])))
 ### Combine clinical metadata + H&E features
 ```{r}
 metaSub <- ovmeta[rownames(ovmeta) %in% patiendIDs,]
-```
-
-```{r}
-#' @param x An ExperimentList objects including SpatialExperiment objects. 
-#' @param meta A data frame with participants' clinical metadata
-#' 
-createMultiModalSpe <- function(x, meta) {
-    
-    ## Add patientID to cell_ids
-    for (i in seq_along(x)) {
-
-        ## Organize image metadata        
-        df <- colData(x[[i]])
-        df$cell_number <- rownames(df)
-        cellID <- paste(names(x)[i], colnames(x[[i]]), sep = "_")
-        df$cell_id <- cellID
-        df$patientID <- names(x)[i]
-        
-        ## Merge with clinical metadata
-        mergedMeta <- merge(df, meta, by = "patientID", all.x = TRUE)
-        
-        ## Update colData
-        colData(x[[i]]) <- mergedMeta
-        colnames(x[[i]]) <- cellID
-        
-    }
-    
-    ## Combine all SpatialExperiment objects
-    res <- do.call(cbind, x)
-    
-    return(res)
-}
 ```
 
 Combine extracted image features (`spes`) and patients' clinical metadata (`metaSub`):
