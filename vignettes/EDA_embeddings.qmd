@@ -1,8 +1,24 @@
 ---
-title: "Untitled"
-format: html
-editor: visual
+title: "EDA on Prov-GigaPath embeddings"
+author: "Sehyun Oh"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+vignette: >
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteIndexEntry{EDA Prov-GigaPath embeddings}
+  %\VignetteEncoding{UTF-8}
+output:
+  BiocStyle::html_document:
+    number_sections: yes
+    toc: yes
+    toc_depth: 4
 ---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(comment = "#>", 
+                      collapse = TRUE, 
+                      message = FALSE, 
+                      warning = FALSE)
+```
 
 # Setup
 
@@ -26,9 +42,11 @@ wget -r -np -nH -R index.html https://u24-cancer-genomics.seandavi.workers.dev/p
 
 ```{r}
 #' @param pg A data frame. Prov-GigaPath output with the dimension 1x15.
-#' @param layer The layer of embedding. Available 0 (default) to 13.  
+#' @param layer The layer of embedding. Available 0 to 13. If it is set to 
+#' `NULL`, all the layers will be returned as 'samples x feature_dimensions'
+#' matrix.
 #' 
-getEmbedding <- function(pg, layer = 0) {
+getEmbedding <- function(pg, layer = NULL) {
   
   ## extract the target layer
   layer_ind <- layer + 1
@@ -60,7 +78,7 @@ for (i in seq_along(fnames)) {
   x <- readr::read_csv(file.path(dir, fnames[i])) # load a file
   
   if (dim(x)[1] != 0) {
-    res <- getEmbedding(x)
+    res <- getEmbedding(x, layer = 0)
   } else {
     res <- NA
   }
@@ -125,7 +143,7 @@ embedding_matrix <- tensor_matrix_full[!duplicated(rownames(tensor_matrix_full))
 ```
 
 ```{r}
-n <- 3 # the minimum number of unique values per attribute
+n <- 2 # the minimum number of unique values per attribute
 m <- 10 # the maximum number of unique values per attribute
 all <- ov_clinical_sub %>%
   as.data.frame() %>%
@@ -146,5 +164,10 @@ metadata_df <- all[slideAttrNames]
 ```
 
 ```{r}
-plots
+
+```
+
+```{r}
+res <- analyze_embedding_separation(embedding_matrix, metadata_df)
+res$plots
 ```

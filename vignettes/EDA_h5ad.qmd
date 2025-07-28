@@ -1,38 +1,121 @@
 ---
-title: "Untitled"
-format: html
-editor: visual
+title: "EDA image features from H&E slide"
+author: "Sehyun Oh"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+vignette: >
+  %\VignetteIndexEntry{H&E image features in H5AD}
+  %\VignetteEncoding{UTF-8}
+  %\VignetteEngine{knitr::rmarkdown}
+output:
+  BiocStyle::html_document:
+    number_sections: yes
+    toc: yes
+    toc_depth: 4
+editor_options: 
+  markdown: 
+    wrap: 72
 ---
 
-```{r}
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(comment = "#>", 
+                      collapse = TRUE, 
+                      message = FALSE, 
+                      warning = FALSE)
+```
+
+```{r message=FALSE}
+library(reticulate)
+use_python(Sys.which("python3"))
+py_install("anndata")
+```
+
+```{r include=TRUE,results="hide",message=FALSE,warning=FALSE}
 library(zellkonverter)
 library(SingleCellExperiment)
 library(SpatialExperiment)
 library(rjson)
+library(anndata)
+library(ggplot2)
 ```
 
-# H5AD files
+
+# Load data
+```{r}
+datDir <- "~/Projects/imageTCGAAnalyses/data/demo_outputs/"
+fname <- "TCGA-23-1121-01Z-00-DX1.E2F25441-32C3-46BF-A845-CB4FA787E8CB.h5ad"
+h5ad_file <- file.path(datDir, fname)
+```
+
+## Load h5ad using anndata
+```{r}
+ad <- read_h5ad(h5ad_file)
+ad
+```
+
+
+## Load h5ad using zellkonverter
 ```{r}
 ## Create SingleCellExperiment object that points to on-disk H5AD file
-h5ad_file <- "data/TCGA-13-A5FT-01Z-00-DX1.2B292DC8-7336-4CD9-AB1A-F6F482E6151A.h5ad"
-sce <- readH5AD(h5ad_file, use_hdf5 = TRUE, reader = "R")
+hn_sce <- readH5AD(h5ad_file, use_hdf5 = TRUE, reader = "R")
+hn_sce
+```
 
+```{r}
+meta <- metadata(hn_sce)$spatial$HoVer_Net
+names(meta) # bbox is stored here
+```
+
+
+SingleCellExperiment to SpatialData
+```{r}
+colnames(reducedDim(hn_sce, "spatial")) <- c("x", "y")
+hn_spe <- toSpatialExperiment(hn_sce)
+
+# Reduced dimension to spatial coords
+spatialCoords(hn_spe) <- reducedDim(hn_sce, "spatial")
+
+assay(hn_spe, "mean_intensity", withDimnames = FALSE) <- matrix(colData(hn_spe)$mean_intensity, nrow = 1)
+assay(hn_spe, "nnd", withDimnames = FALSE) <- matrix(colData(hn_spe)$nearest_neighbor_distance, nrow = 1)
+```
+
+```{r}
+# SpatialExperiment to SpatialFeatureExperiment
+hn_sfe <- SpatialFeatureExperiment::toSpatialFeatureExperiment(hn_spe)
+```
+
+```{r echo=FALSE, eval=FALSE}
 # Extract spatial coordinates (usually stored in adata.obsm["spatial"] in Python)
-spatialCoords <- as.matrix(reducedDim(sce, "spatial"))  # Assuming "spatial" reduced dimension
+spatialCoords <- as.matrix(reducedDim(hn_sce, "spatial"))  # x-y coordinates
 colnames(spatialCoords) <- c("x_centroid", "y_centroid")
 
 # Create the SpatialExperiment object
-spe <- SpatialExperiment(
-    assays = assays(sce),
-    colData = colData(sce),
-    rowData = rowData(sce),
+hn_spe <- SpatialExperiment(
+    assays = assays(hn_sce),
+    colData = colData(hn_sce),
+    rowData = rowData(hn_sce),
     spatialCoords = spatialCoords
 )
 ```
 
 Plot x-y coordinate
+
 ```{r echo=FALSE, out.width="66%", fig.align="center"}
 par(mar = rep(0, 4))
-plot(spatialCoords(spe), cex = 0.1, pch = 16, asp = 1, axes = FALSE, 
+# plot(spatialCoords(hn_spe), cex = 0.1, pch = 16, asp = 1, axes = FALSE, 
+#      xlab = "", ylab = "")
+plot(spatialCoords(hn_sfe), cex = 0.1, pch = 16, asp = 1, axes = FALSE, 
      xlab = "", ylab = "")
 ```
+
+```{r}
+gg <- data.frame(spatialCoords(hn_spe), colData(hn_spe))
+pal <- RColorBrewer::brewer.pal(length(unique(gg$type)), "Paired")
+
+ggplot(gg, aes(x, y, col = type)) +
+    facet_wrap(~ sample_id, scales = "free") +
+    geom_point(size = 0.1) + 
+    scale_color_manual(values = pal) +
+    guides(col = guide_legend(override.aes = list(size = 2))) +
+    theme_void()
+```
+
