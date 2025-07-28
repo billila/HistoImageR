@@ -1,0 +1,21 @@
+Package: HistoImageR
+Title: Incorporating extracted features from H&E images into R/Bioconductor ecosystem.
+Authors@R: c(
+  person("Sehyun", "Oh", email = "shbrief@gmail.com", role = c("aut","cre"))
+Version: 0.0.99
+Date: 2025-7-28
+Description: This package provides functions to import extracted H&E image
+  features into R, incorporate them with multi-omics data, and connect to 
+  existing R/Bioconductor workflows.   
+Depends: 
+  R (>= 4.1.0),
+  SpatialExperiment
+Imports:
+  anndata
+License: Artistic-2.0
+Encoding: UTF-8
+LazyData: true
+RoxygenNote: 7.2.1
+VignetteBuilder: knitr
+URL: https://github.com/shbrief/HistoImageR
+BugReports: https://github.com/shbrief/HistoImageR/issues
