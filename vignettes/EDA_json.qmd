@@ -1,0 +1,550 @@
+---
+title: "EDA image features from H&E slide"
+author: "Sehyun Oh"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+vignette: >
+  %\VignetteIndexEntry{H&E image features in JSON}
+  %\VignetteEncoding{UTF-8}
+  %\VignetteEngine{knitr::rmarkdown}
+output:
+  BiocStyle::html_document:
+    number_sections: yes
+    toc: yes
+    toc_depth: 4
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(comment = "#>", 
+                      collapse = TRUE, 
+                      message = FALSE, 
+                      warning = FALSE)
+```
+
+```{r include=TRUE,results="hide",message=FALSE,warning=FALSE}
+library(jsonlite) # it should be able to read from url
+library(SpatialExperiment)
+```
+
+```{r}
+datDir <- "~/Projects/imageTCGAAnalyses/data/demo_outputs/"
+fname <- "TCGA-23-1121-01Z-00-DX1.E2F25441-32C3-46BF-A845-CB4FA787E8CB.json"
+
+text_content <- readr::read_file(file.path(datDir, fname))
+json_data <- fromJSON(text_content)
+```
+
+```{r}
+str(json_data[[2]][[1]])
+```
+
+Store as a SpatialExperiment object
+```{r}
+cell_list <- json_data[[2]]
+
+cellListToSE <- function(x) {
+    
+    ## Create SpatialExperiment object
+    se <- SpatialExperiment(
+        spatialCoords = do.call(rbind, lapply(x, function(x) x$centroid)),
+        colData = DataFrame(
+            cell_type = sapply(x, function(x) x$type),
+            type_prob = sapply(x, function(x) x$type_prob)
+        )
+    )
+    
+    ## Store segmentation polygons in metadata
+    metadata(se)$polygons <- lapply(x, function(x) x$contour)
+    metadata(se)$bboxes <- lapply(x, function(x) x$bbox)
+    
+    ## Update spatialCoords column names
+    colnames(spatialCoords(se)) <- c("x", "y")
+    
+    return(se)
+}
+
+hnspe <- cellListToSE(cell_list)
+hnspe
+```
+
+# Feature extraction using custom code
+```{r eval=FALSE}
+source("~/Projects/imageTCGAAnalyses/R/feature_extraction.R")
+example_nuclei <- json_data[[2]]
+extracted_features <- extract_nuclei_features(example_nuclei, 
+                                              image_dims = c(1024, 1024),
+                                              verbose = TRUE)
+saveRDS(extracted_features, 
+        "~/Projects/imageTCGAAnalyses/data/demo_outputs/extracted_features.rds")
+```
+
+```{r echo=FALSE}
+extracted_features <- readRDS("~/Projects/imageTCGAAnalyses/data/demo_outputs/extracted_features.rds")
+```
+
+
+# QC using custom code
+Comprehensive H&E Image Feature Quality Control with Visualizations
+
+```{r include=TRUE,results="hide",message=FALSE,warning=FALSE}
+library(dplyr)
+library(ggplot2)
+library(plotly)
+library(corrplot)
+library(gridExtra)
+library(viridis)
+library(ggridges)
+library(hexbin)
+library(RColorBrewer)
+library(pheatmap)
+library(VennDiagram)
+library(GGally)
+library(reshape2)
+library(stringr)
+library(tidyr)
+```
+
+```{r collapse=FALSE}
+# Set theme for consistent plotting
+theme_set(theme_minimal() + theme(
+  plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+  axis.title = element_text(size = 12),
+  legend.title = element_text(size = 11)
+))
+
+# Assuming your data is in extracted_features[[1]]
+df <- extracted_features[[1]]
+
+# ============================================================================
+# 1. BASIC DATA QUALITY ASSESSMENT
+# ============================================================================
+
+# Missing values visualization
+missing_data <- df %>%
+  summarise_all(~sum(is.na(.))) %>%
+  gather(key = "variable", value = "missing_count") %>%
+  mutate(missing_percent = missing_count / nrow(df) * 100)
+
+p_missing <- ggplot(missing_data, aes(x = reorder(variable, missing_percent), 
+                                      y = missing_percent)) +
+  geom_col(fill = "coral") +
+  coord_flip() +
+  labs(title = "Missing Data by Feature", 
+       x = "Features", y = "Missing Data (%)") +
+  theme(axis.text.y = element_text(size = 10))
+
+print(p_missing)
+
+# Data completeness summary
+completeness_summary <- data.frame(
+  total_nuclei = nrow(df),
+  complete_cases = sum(complete.cases(df)),
+  completeness_rate = round(sum(complete.cases(df))/nrow(df)*100, 2)
+)
+
+print(completeness_summary)
+
+# ============================================================================
+# 2. FEATURE DISTRIBUTION ANALYSIS
+# ============================================================================
+
+# Create distribution plots for all numeric features
+numeric_features <- df %>% 
+  select(-nucleus_id, -type) %>%
+  select_if(is.numeric) %>%
+  names()
+
+# Multi-panel distribution plots
+create_distribution_plot <- function(feature_name) {
+  ggplot(df, aes_string(x = feature_name)) +
+    geom_histogram(aes(y = ..density..), bins = 50, alpha = 0.7, fill = "skyblue") +
+    geom_density(color = "red", size = 1) +
+    labs(title = paste("Distribution of", gsub("_", " ", str_to_title(feature_name))),
+         x = feature_name, y = "Density") +
+    theme_minimal()
+}
+
+# # Create plots for key morphological features
+# key_features <- c("contour_area", "circularity", "elongation", "solidity", "eccentricity")
+# dist_plots <- lapply(key_features, create_distribution_plot)
+# do.call(grid.arrange, c(dist_plots, ncol = 2))
+
+# Log-scale distributions for area measurements
+area_features <- c("bbox_area", "contour_area")
+area_plots <- lapply(area_features, function(feat) {
+  ggplot(df, aes_string(x = feat)) +
+    geom_histogram(bins = 50, alpha = 0.7, fill = "lightgreen") +
+    scale_x_log10() +
+    labs(title = paste("Log-scale Distribution:", feat),
+         x = paste("log10(", feat, ")"), y = "Count")
+})
+do.call(grid.arrange, c(area_plots, ncol = 2))
+
+# ============================================================================
+# 3. OUTLIER DETECTION AND VISUALIZATION
+# ============================================================================
+
+# Function to identify outliers using IQR method
+identify_outliers <- function(x) {
+  Q1 <- quantile(x, 0.25, na.rm = TRUE)
+  Q3 <- quantile(x, 0.75, na.rm = TRUE)
+  IQR <- Q3 - Q1
+  lower <- Q1 - 1.5 * IQR
+  upper <- Q3 + 1.5 * IQR
+  return(x < lower | x > upper)
+}
+
+# Create outlier flags for each feature
+outlier_flags <- df %>%
+  select(all_of(numeric_features)) %>%
+  mutate_all(identify_outliers) %>%
+  mutate(nucleus_id = df$nucleus_id) %>%
+  gather(key = "feature", value = "is_outlier", -nucleus_id) %>%
+  filter(is_outlier == TRUE)
+
+# Outlier count by feature
+outlier_summary <- outlier_flags %>%
+  group_by(feature) %>%
+  summarise(outlier_count = n(), .groups = 'drop') %>%
+  mutate(outlier_percent = outlier_count / nrow(df) * 100)
+
+p_outliers <- ggplot(outlier_summary, aes(x = reorder(feature, outlier_percent), 
+                                          y = outlier_percent)) +
+  geom_col(fill = "orange") +
+  coord_flip() +
+  labs(title = "Outlier Percentage by Feature", 
+       x = "Features", y = "Outliers (%)") +
+  theme(axis.text.y = element_text(size = 10))
+
+print(p_outliers)
+
+# Box plots with outliers highlighted
+boxplot_features <- c("contour_area", "circularity", "elongation", "solidity")
+box_plots <- lapply(boxplot_features, function(feat) {
+  ggplot(df, aes_string(y = feat)) +
+    geom_boxplot(fill = "lightblue", alpha = 0.7) +
+    labs(title = paste("Boxplot:", gsub("_", " ", str_to_title(feat))),
+         y = feat) +
+    theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
+})
+do.call(grid.arrange, c(box_plots, ncol = 2))
+
+# ============================================================================
+# 4. CELL TYPE CLASSIFICATION QC
+# ============================================================================
+
+# Type distribution
+p_type_dist <- ggplot(df, aes(x = as.factor(type), fill = as.factor(type))) +
+  geom_bar() +
+  scale_fill_viridis_d() +
+  labs(title = "Distribution of Cell Types", 
+       x = "Cell Type", y = "Count", fill = "Type") +
+  theme(legend.position = "none")
+
+print(p_type_dist)
+
+# Classification confidence distribution
+p_conf_dist <- ggplot(df, aes(x = type_prob, fill = as.factor(type))) +
+  geom_histogram(bins = 30, alpha = 0.7) +
+  facet_wrap(~type, scales = "free_y") +
+  scale_fill_viridis_d() +
+  labs(title = "Classification Confidence by Cell Type",
+       x = "Type Probability", y = "Count", fill = "Type") +
+  theme(legend.position = "none")
+
+print(p_conf_dist)
+
+# Low confidence classifications
+low_conf_threshold <- 0.7
+low_conf_cells <- df %>%
+  filter(type_prob < low_conf_threshold) %>%
+  group_by(type) %>%
+  summarise(low_conf_count = n(), .groups = 'drop') %>%
+  mutate(total_count = table(df$type)[as.character(type)],
+         low_conf_percent = low_conf_count / total_count * 100)
+
+p_low_conf <- ggplot(low_conf_cells, aes(x = as.factor(type), y = low_conf_percent)) +
+  geom_col(fill = "red", alpha = 0.7) +
+  labs(title = paste("Low Confidence Classifications (<", low_conf_threshold, ")"),
+       x = "Cell Type", y = "Low Confidence (%)") +
+  geom_text(aes(label = paste0(round(low_conf_percent, 1), "%")), 
+            vjust = -0.5)
+
+print(p_low_conf)
+
+# ============================================================================
+# 5. FEATURE CORRELATION ANALYSIS
+# ============================================================================
+
+# Correlation matrix
+feature_matrix <- df %>%
+  select(all_of(numeric_features)) %>%
+  cor(use = "complete.obs")
+
+# Correlation heatmap
+corrplot(feature_matrix, method = "color", type = "upper", 
+         order = "hclust", tl.cex = 0.8, tl.col = "black",
+         title = "Feature Correlation Matrix", mar = c(0,0,1,0))
+
+# Interactive correlation plot
+cor_melted <- melt(feature_matrix)
+p_cor_interactive <- plot_ly(
+  z = cor_melted$value,
+  x = cor_melted$Var1,
+  y = cor_melted$Var2,
+  type = "heatmap",
+  colorscale = "RdBu",
+  zmid = 0
+) %>%
+  layout(title = "Interactive Feature Correlation Heatmap")
+
+print(p_cor_interactive)
+
+# Identify highly correlated feature pairs
+high_cor_pairs <- which(abs(feature_matrix) > 0.8 & feature_matrix != 1, arr.ind = TRUE)
+high_cor_df <- data.frame(
+  feature1 = rownames(feature_matrix)[high_cor_pairs[,1]],
+  feature2 = colnames(feature_matrix)[high_cor_pairs[,2]],
+  correlation = feature_matrix[high_cor_pairs]
+) %>%
+  arrange(desc(abs(correlation)))
+
+print("Highly correlated feature pairs (|r| > 0.8):")
+print(high_cor_df)
+
+# ============================================================================
+# 6. PCA FOR OUTLIER DETECTION
+# ============================================================================
+
+# # Perform PCA
+# pca_data <- df %>%
+#   select(all_of(numeric_features)) %>%
+#   scale()
+# 
+# pca_result <- prcomp(pca_data, center = FALSE, scale. = FALSE)
+# 
+# # PCA scores with outlier detection
+# pca_scores <- as.data.frame(pca_result$x[,1:4])
+# pca_scores$nucleus_id <- df$nucleus_id
+# pca_scores$type <- as.factor(df$type)
+# 
+# # Define outliers in PC space (3 SD from mean)
+# pca_scores$pc1_outlier <- abs(pca_scores$PC1) > 3*sd(pca_scores$PC1)
+# pca_scores$pc2_outlier <- abs(pca_scores$PC2) > 3*sd(pca_scores$PC2)
+# pca_scores$is_outlier <- pca_scores$pc1_outlier | pca_scores$pc2_outlier
+# 
+# # PCA biplot
+# p_pca <- ggplot(pca_scores, aes(x = PC1, y = PC2, color = type, shape = is_outlier)) +
+#   geom_point(alpha = 0.6, size = 2) +
+#   scale_color_viridis_d() +
+#   scale_shape_manual(values = c(16, 17), labels = c("Normal", "Outlier")) +
+#   labs(title = "PCA Biplot with Outlier Detection",
+#        x = paste0("PC1 (", round(summary(pca_result)$importance[2,1]*100, 1), "% variance)"),
+#        y = paste0("PC2 (", round(summary(pca_result)$importance[2,2]*100, 1), "% variance)"),
+#        color = "Cell Type", shape = "Outlier Status")
+# 
+# print(p_pca)
+# 
+# # Scree plot
+# pca_var <- pca_result$sdev^2
+# pca_var_prop <- pca_var / sum(pca_var)
+# scree_data <- data.frame(
+#   PC = 1:length(pca_var_prop),
+#   Variance = pca_var_prop,
+#   Cumulative = cumsum(pca_var_prop)
+# )
+# 
+# p_scree <- ggplot(scree_data[1:10,], aes(x = PC, y = Variance)) +
+#   geom_bar(stat = "identity", fill = "steelblue") +
+#   geom_line(aes(y = Cumulative), color = "red", size = 1) +
+#   geom_point(aes(y = Cumulative), color = "red", size = 2) +
+#   scale_y_continuous(sec.axis = sec_axis(~., name = "Cumulative Variance")) +
+#   labs(title = "PCA Scree Plot", x = "Principal Component", y = "Proportion of Variance")
+# 
+# print(p_scree)
+
+# ============================================================================
+# 7. GEOMETRIC CONSISTENCY CHECKS
+# ============================================================================
+
+# Area consistency check (bbox vs contour area)
+df$area_ratio <- df$contour_area / df$bbox_area
+
+p_area_consist <- ggplot(df, aes(x = bbox_area, y = contour_area, color = area_ratio)) +
+  geom_point(alpha = 0.6) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+  scale_color_viridis_c() +
+  scale_x_log10() + scale_y_log10() +
+  labs(title = "Area Consistency Check", 
+       x = "Bounding Box Area (log10)", 
+       y = "Contour Area (log10)",
+       color = "Area Ratio")
+
+print(p_area_consist)
+
+# Aspect ratio vs elongation consistency
+df$aspect_elongation_diff <- abs(df$bbox_aspect_ratio - df$elongation)
+
+p_aspect_consist <- ggplot(df, aes(x = bbox_aspect_ratio, y = elongation, 
+                                   color = aspect_elongation_diff)) +
+  geom_point(alpha = 0.6) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+  scale_color_viridis_c() +
+  labs(title = "Aspect Ratio vs Elongation Consistency",
+       x = "Bounding Box Aspect Ratio", 
+       y = "Elongation",
+       color = "Absolute Difference")
+
+print(p_aspect_consist)
+
+# Circularity bounds check
+invalid_circularity <- df %>%
+  filter(circularity < 0 | circularity > 1)
+
+p_circ_bounds <- ggplot(df, aes(x = circularity)) +
+  geom_histogram(bins = 50, fill = "lightblue", alpha = 0.7) +
+  geom_vline(xintercept = c(0, 1), color = "red", linetype = "dashed") +
+  labs(title = "Circularity Distribution (Valid range: 0-1)",
+       x = "Circularity", y = "Count") +
+  annotate("text", x = 0.5, y = max(hist(df$circularity, breaks = 50, plot = FALSE)$counts),
+           label = paste("Invalid values:", nrow(invalid_circularity)))
+
+print(p_circ_bounds)
+
+# ============================================================================
+# 8. BIOLOGICAL PLAUSIBILITY CHECKS
+# ============================================================================
+
+# Define biological plausibility thresholds
+bio_flags <- df %>%
+  mutate(
+    low_solidity = solidity < 0.7,
+    extreme_eccentric = eccentricity > 0.95,
+    very_elongated = elongation > 5,
+    very_compact = compactness > 3,
+    very_small = contour_area < quantile(contour_area, 0.01),
+    very_large = contour_area > quantile(contour_area, 0.99)
+  )
+
+# Summary of biological flags
+bio_summary <- bio_flags %>%
+  select(low_solidity:very_large) %>%
+  summarise_all(~sum(., na.rm = TRUE)) %>%
+  gather(key = "flag", value = "count") %>%
+  mutate(percentage = count / nrow(df) * 100)
+
+p_bio_flags <- ggplot(bio_summary, aes(x = reorder(flag, percentage), y = percentage)) +
+  geom_col(fill = "orange") +
+  coord_flip() +
+  labs(title = "Biological Plausibility Flags",
+       x = "Flag Type", y = "Percentage of Nuclei (%)") +
+  geom_text(aes(label = paste0(round(percentage, 1), "%")), hjust = -0.1)
+
+print(p_bio_flags)
+
+# Ridge plots for features by cell type
+ridge_features <- c("contour_area", "circularity", "elongation", "solidity")
+ridge_plots <- lapply(ridge_features, function(feat) {
+  ggplot(df, aes_string(x = feat, y = "as.factor(type)", fill = "as.factor(type)")) +
+    geom_density_ridges(alpha = 0.7) +
+    scale_fill_viridis_d() +
+    labs(title = paste("Distribution of", gsub("_", " ", str_to_title(feat)), "by Cell Type"),
+         x = feat, y = "Cell Type") +
+    theme(legend.position = "none")
+})
+do.call(grid.arrange, c(ridge_plots, ncol = 2))
+
+# ============================================================================
+# 9. INTERACTIVE QUALITY CONTROL DASHBOARD
+# ============================================================================
+
+# Interactive scatter plot for manual inspection
+p_interactive <- plot_ly(df, 
+                        x = ~contour_area, 
+                        y = ~circularity,
+                        color = ~as.factor(type),
+                        size = ~type_prob,
+                        text = ~paste("ID:", nucleus_id,
+                                     "<br>Type:", type,
+                                     "<br>Prob:", round(type_prob, 3),
+                                     "<br>Area:", round(contour_area, 1),
+                                     "<br>Circularity:", round(circularity, 3)),
+                        hovertemplate = "%{text}<extra></extra>") %>%
+  layout(title = "Interactive QC Plot: Area vs Circularity",
+         xaxis = list(title = "Contour Area", type = "log"),
+         yaxis = list(title = "Circularity"))
+
+print(p_interactive)
+
+# Multi-dimensional scatter plot matrix for key features
+key_features_subset <- c("contour_area", "circularity", "elongation", "solidity", "type")
+p_pairs <- df %>%
+  select(all_of(key_features_subset)) %>%
+  mutate(type = as.factor(type)) %>%
+  ggpairs(aes(color = type),
+          columns = 1:4,
+          upper = list(continuous = "cor"),
+          lower = list(continuous = "points"),
+          diag = list(continuous = "densityDiag")) +
+  theme_minimal() +
+  labs(title = "Pairwise Feature Relationships by Cell Type")
+
+print(p_pairs)
+```
+
+```{r}
+# ============================================================================
+# 10. QC SUMMARY REPORT
+# ============================================================================
+
+# Create comprehensive QC summary
+qc_summary <- list(
+  total_nuclei = nrow(df),
+  complete_cases = sum(complete.cases(df)),
+  outlier_nuclei = length(unique(outlier_flags$nucleus_id)),
+  low_confidence_classifications = sum(df$type_prob < 0.7),
+  invalid_circularity = nrow(invalid_circularity),
+  # pca_outliers = sum(pca_scores$is_outlier),
+  high_correlation_pairs = nrow(high_cor_df)
+)
+
+# Convert to data frame for visualization
+qc_summary_df <- data.frame(
+  metric = names(qc_summary),
+  value = unlist(qc_summary),
+  percentage = round(unlist(qc_summary) / nrow(df) * 100, 2)
+)
+
+p_qc_summary <- ggplot(qc_summary_df[-1,], aes(x = reorder(metric, percentage), y = percentage)) +
+  geom_col(fill = "lightcoral") +
+  coord_flip() +
+  labs(title = "QC Summary: Issues by Percentage",
+       x = "QC Metric", y = "Percentage of Total Nuclei (%)") +
+  geom_text(aes(label = paste0(percentage, "%")), hjust = -0.1)
+
+print(p_qc_summary)
+
+# Print summary table
+cat("=== QUALITY CONTROL SUMMARY ===\n")
+print(qc_summary_df)
+
+# Recommendations based on QC results
+cat("\n=== QC RECOMMENDATIONS ===\n")
+if(qc_summary$outlier_nuclei > nrow(df) * 0.05) {
+  cat("⚠️  High number of outliers detected (>5%). Consider reviewing segmentation parameters.\n")
+}
+if(qc_summary$low_confidence_classifications > nrow(df) * 0.1) {
+  cat("⚠️  Many low-confidence classifications (>10%). Consider retraining classifier.\n")
+}
+if(qc_summary$invalid_circularity > 0) {
+  cat("⚠️  Invalid circularity values detected. Check feature extraction algorithm.\n")
+}
+if(nrow(high_cor_df) > 5) {
+  cat("⚠️  Many highly correlated features. Consider dimensionality reduction.\n")
+}
+
+cat("✅ QC analysis complete. Review all plots for detailed insights.\n")
+```
+
