@@ -1,0 +1,495 @@
+---
+title: "Reproduce spatialFDA vignette with H&E slide features"
+author: "Sehyun Oh"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+vignette: >
+  %\VignetteIndexEntry{Reproduce spatialFDA vignette}
+  %\VignetteEncoding{UTF-8}
+  %\VignetteEngine{knitr::rmarkdown}
+output:
+  BiocStyle::html_document:
+    number_sections: yes
+    toc: yes
+    toc_depth: 4
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(comment = "#>", 
+                      collapse = TRUE, 
+                      message = FALSE, 
+                      warning = FALSE)
+```
+
+```{r include=TRUE,results="hide",message=FALSE,warning=FALSE}
+library("spatialFDA")
+library("dplyr")
+library("ggplot2")
+library("tidyr")
+library("stringr")
+library("dplyr")
+library("patchwork")
+library("SpatialExperiment")
+library("curatedTCGAData")
+library("png")
+library("jsonlite")
+
+set.seed(1234)
+```
+
+# Getting started
+## Loading the data
+### Multi-omics data
+```{r}
+ovmae <- curatedTCGAData("OV", "*", version = "2.0.1", dry.run = FALSE)
+```
+
+```{r}
+ovmeta <- colData(ovmae)
+```
+
+### H&E image features
+```{r cellListToSE, echo=FALSE}
+#' @param x A list.
+#' 
+cellListToSE <- function(x) {
+    
+    ## Create SpatialExperiment object
+    se <- SpatialExperiment(
+        spatialCoords = do.call(rbind, lapply(x, function(x) x$centroid)),
+        colData = DataFrame(
+            cell_type = sapply(x, function(x) x$type),
+            type_prob = sapply(x, function(x) x$type_prob)
+        )
+    )
+    
+    ## Store segmentation polygons in metadata
+    metadata(se)$polygons <- lapply(x, function(x) x$contour)
+    metadata(se)$bboxes <- lapply(x, function(x) x$bbox)
+    
+    ## Update column names
+    colnames(spatialCoords(se)) <- c("x", "y") # spatialCoords slot
+    
+    ## Convert cell_type as factors
+    colData(se)$cell_type <- as.factor(colData(se)$cell_type) 
+    
+    return(se)
+}
+```
+
+```{r eval=FALSE}
+datDir <- "~/Projects/imageTCGAAnalyses/data/demo_outputs/"
+fname <- "TCGA-23-1121-01Z-00-DX1.E2F25441-32C3-46BF-A845-CB4FA787E8CB.json"
+
+text_content <- readr::read_file(file.path(datDir, fname))
+json_data <- fromJSON(text_content)
+hnspe <- cellListToSE(json_data[[2]])
+```
+
+```{r all_tcga_ov, echo=FALSE, eval=FALSE}
+## Get JSON file names from url
+library(httr)
+library(rvest)
+
+url <- "https://u24-cancer-genomics.seandavi.workers.dev/hovernet/TCGA_OV/json/"
+response <- GET(url)
+content <- content(response, "text")
+
+# Parse HTML and extract filenames
+page <- read_html(content)
+links <- page %>% html_nodes("a") %>% html_attr("href")
+
+# Filter for TCGA JSON files
+tcga_files <- links[grepl("^TCGA-.*\\.json$", links)]
+```
+
+```{r get_all_json_to_spe, echo=FALSE}
+hnPath <- "~/Projects/imageTCGAAnalyses/data/hovernet"
+for (tcga_file in tcga_files) {
+    text_content <- readr::read_file(paste0(url, tcga_file))
+    json_data <- fromJSON(text_content)
+    hnspe <- cellListToSE(json_data[[2]])
+}
+```
+
+
+Two example samples for demo:
+```{r}
+fnames <- c("TCGA-23-1121-01Z-00-DX1.E2F25441-32C3-46BF-A845-CB4FA787E8CB",
+            "TCGA-57-1582-01Z-00-DX1.BDF02DAA-E520-46BD-A479-58CAA4354B1A")
+pathToFiles <- "~/Projects/imageTCGAAnalyses/data/demo_outputs"
+```
+
+
+
+```{r}
+patiendIDs <- stringr::str_extract(fnames, "TCGA-\\d{2}-\\d{4}")
+spelist <- vector(mode = "list", length = length(fnames))
+names(spelist) <- patiendIDs
+
+for (i in seq_along(fnames)) {
+    # pathToFiles <- "https://u24-cancer-genomics.seandavi.workers.dev/hovernet/TCGA_OV/json"
+    json_data <- fromJSON(file.path(pathToFiles, paste0(fnames[i], ".json")))
+    cells <- json_data[[2]]
+    randomSubset <- sample(seq_along(cells), round(length(cells)/10, 0)) # Use only 1/10 of cells for demo
+    spe <- cellListToSE(cells[sort(randomSubset)])
+    
+    ## Create SotredSpatialImage object (from local file)
+    image_file <- file.path(pathToFiles, paste0(fnames[i], ".png"))
+    spe <- addImg(spe, 
+                  imageSource = image_file,
+                  sample_id = "sample01",
+                  image_id = "h&e",
+                  scaleFactor = 1)
+    
+    spelist[i] <- spe
+}
+
+spes <- ExperimentList(spelist)
+```
+
+```{r}
+plot(imgRaster(getImg(spes[[1]])))
+```
+
+
+### Combine clinical metadata + H&E features
+```{r}
+metaSub <- ovmeta[rownames(ovmeta) %in% patiendIDs,]
+```
+
+```{r}
+#' @param x An ExperimentList objects including SpatialExperiment objects. 
+#' @param meta A data frame with participants' clinical metadata
+#' 
+createMultiModalSpe <- function(x, meta) {
+    
+    ## Add patientID to cell_ids
+    for (i in seq_along(x)) {
+
+        ## Organize image metadata        
+        df <- colData(x[[i]])
+        df$cell_number <- rownames(df)
+        cellID <- paste(names(x)[i], colnames(x[[i]]), sep = "_")
+        df$cell_id <- cellID
+        df$patientID <- names(x)[i]
+        
+        ## Merge with clinical metadata
+        mergedMeta <- merge(df, meta, by = "patientID", all.x = TRUE)
+        
+        ## Update colData
+        colData(x[[i]]) <- mergedMeta
+        colnames(x[[i]]) <- cellID
+        
+    }
+    
+    ## Combine all SpatialExperiment objects
+    res <- do.call(cbind, x)
+    
+    return(res)
+}
+```
+
+Combine extracted image features (`spes`) and patients' clinical metadata (`metaSub`):
+```{r}
+merged <- createMultiModalSpe(spes, metaSub)
+merged
+```
+
+
+
+## Visualising the raw data
+```{r plotting fovs, warning = FALSE, fig.width=8, fig.height=15}
+# hnspe <- spes[[1]]
+hnspe <- merged
+hndf <- data.frame(spatialCoords(hnspe), colData(hnspe))
+
+hnp <- ggplot(hndf, aes(x = x, y = y, color = type_prob)) +
+    geom_point(size= 0.5) +
+    facet_wrap(~sample_id) +
+    theme(legend.title.size = 20, legend.text.size = 20) +
+    xlab("x") +
+    ylab("y") +
+    labs(color = "type prob")+
+    coord_equal() +
+    theme_light()
+
+hnq <- ggplot(hndf, aes(x = x, y = y, color = cell_type)) +
+    geom_point(size= 0.5) +
+    facet_wrap(~sample_id) +
+    theme(legend.title.size = 20, legend.text.size = 20) +
+    xlab("x") +
+    ylab("y") +
+    labs(color = "cell type") +
+    coord_equal() +
+    theme_light()
+
+wrap_plots(list(hnp,hnq), widths = c(1,1), heights = c(1,1), nrow = 2, ncol = 1)
+```
+
+# Calculating Spatial Statistics Metrics
+## Correlation
+
+A well-known metric is Ripley's $K$ function or its variance-stabilized transformation, the $L$ function. We can calculate a variant of the $L$ function with the function `calcMetricPerFov` between e.g $\alpha$ and cytotoxic T cells. The output is a data frame with the following most important columns:
+
+- `r`: the radius at which the spatial metric is evaluated   
+- `theo`: the theoretical value of a homogeneous (Poisson) realization of a point process   
+- `iso`: an isotropic edge corrected value of the $L$ function   
+
+```{r Lfunction, warning = FALSE, message = FALSE}
+hnmetricRes <- calcMetricPerFov(spe = hnspe, 
+                                selection = c("1", "3"),
+                                subsetby = "sample_id", 
+                                fun = "Lcross", 
+                                marks = "cell_type",
+                                by = c("sample_id"),
+                                ncores = 1)
+hnmetricRes %>% head(3)
+```
+
+```{r plotLfunction, warning = FALSE, fig.width=8, fig.height=8}
+## Create a unique plotting ID: we have only one slide/image per patient
+map <- data.frame(sample_id = c("sample01.1", "sample01.2"),
+                  patient_id = patiendIDs)
+metricResIDed <- merge(hnmetricRes, map, by = "sample_id", all.x = TRUE)
+
+# change levels for plotting
+metricResIDed$patient_id <- factor(metricResIDed$patient_id)
+
+# plot metrics
+plotMetricPerFov(metricResIDed, 
+                 correction = "iso", 
+                 x = "r",
+                 imageId = "sample_id", 
+                 # ID = "patient_id", 
+                 ncol = 2)
+```
+
+
+## Spacing
+
+Another important ahnspect of spatial analysis is spacing. Here, the shortest distances or empty space to the next neighbor is calculated. This quantifies a different ahnspect of a point pattern than correlation or intensity of points. Two well-known functions are [@baddeleySpatialPointPatterns, pp. 255-266]:
+
+- nearest-neighbor distance distribution $G$
+
+- empty space function $F$
+
+For spacing metrics, we get different border corrections but otherwise the output stays the same:
+
+```{r Gfunction, warning = FALSE, message = FALSE}
+hnmetricRes <- calcMetricPerFov(spe = hnspe, 
+                                selection = c("1", "3"),
+                                subsetby = "sample_id", 
+                                fun = "Gcross", 
+                                marks = "cell_type",
+                                rSeq = seq(0, 50, length.out = 50),
+                                by = c("sample_id"),
+                                ncores = 1)
+
+hnmetricRes %>% head(3)
+```
+
+```{r plotGfunction, warning = FALSE, fig.width=8, fig.height=8}
+## Create a unique plotting ID: we have only one slide/image per patient
+map <- data.frame(sample_id = c("sample01.1", "sample01.2"),
+                  patient_id = patiendIDs)
+metricResIDed <- merge(hnmetricRes, map, by = "sample_id", all.x = TRUE)
+
+# change levels for plotting
+metricResIDed$patient_id <- factor(metricResIDed$patient_id)
+
+# plot metrics
+plotMetricPerFov(metricResIDed, 
+                 correction = "rs", 
+                 x = "r",
+                 imageId = "sample_id", 
+                 # ID = "patient_id", 
+                 ncol = 2)
+```
+
+In the nearest-neighbor distance function, we see a strong difference between onset T1D, long-duration T1D and non-diabetic controls in terms of spacing of $\alpha$ and cytotoxic T cells. 
+
+# Functional boxplot
+
+Looking at raw spatial statistics curves can be challenging. In order to summarise this information, we can plot functional boxplots by aggregating the curves into boxplots via a user-defined variable `aggregate_by`. We use the `fbplot` function from the `r BiocStyle::CRANpkg('fda')` package [@sun2011functional; @ramsay2024fda].
+
+```{r, funcBoxPlot, warning = FALSE, results='hide'}
+# create a unique ID per row in the dataframe
+metricRes$ID <- paste0(
+    metricRes$patient_stage, "x", metricRes$patient_id,
+    "x", metricRes$image_number
+)
+#removing field of views that have as a curve only zeros - these are cases where
+#there is no cells of one type
+metricRes <- metricRes %>% dplyr::group_by(ID) %>% dplyr::filter(sum(rs) >= 1)
+
+collector <- plotFbPlot(metricRes, "r", "rs", "patient_stage")
+```
+
+The functional boxplot shows that onset $G$-curves are more variable than the corresponding long-duration and non-diabetic curves. We note as well, that the variability is heteroscedastic along the domain (i.e., variance increases with radius), which is undesirable for our statistical modelling. Therefore, we can e.g. apply a variance stabilising transformation to our data or model this variance in the statistical model.
+
+```{r, variancetransform, warning = FALSE}
+# can determine with a boxcox transformation what is the ideal parameter
+# for the transformation
+metricRes$rs <- sqrt(metricRes$rs)
+
+collector <- plotFbPlot(metricRes, 'r', 'rs', 'patient_stage')
+```
+
+# Functional principal component analysis
+
+Another analysis that can be performed is functional principal componentent analysis (fPCA). This is a method to capture the main modes of variation in functional data [@ramsayPrincipalComponentsAnalysis2005]. We use the `r BiocStyle::CRANpkg('refund')` implementation of fPCA. 
+
+```{r fPCA, warning = FALSE}
+# filter out all rows that have a constant zero part - all r=<10
+metricRes <- metricRes %>% filter(r >= 10)
+
+# prepare dataframe from calcMetricRes to be in the correct format for pffr
+dat <- prepData(metricRes, "r", "rs")
+
+# create meta info of the IDs
+splitData <- dat$ID %>%
+  str_replace("-","_") %>%
+  str_split_fixed("x", 3) %>% 
+  data.frame(stringsAsFactors = TRUE) %>%
+  setNames(c("condition", "patient_id", "imageId")) %>%
+  mutate(condition = relevel(condition,"Non_diabetic"))
+dat <- cbind(dat, splitData)
+
+# drop rows with NA
+dat <- dat |> drop_na()
+# calculate the fPCA
+pca <- functionalPCA(dat = dat, r = metricRes$r |> unique(), pve = 0.995)
+evalues <- pca$evalues
+efunctions <- pca$efunctions
+# plot the mean curve and the two first eigenfunctions
+p_mu <- ggplot(data.frame(r = unique(metricRes$r), mu = pca$mu), 
+               aes(x = r, y = mu)) +
+    geom_line() +
+    theme_light() +
+    xlab("r [µm]")
+
+p_efunction1 <- ggplot(data.frame(r = unique(metricRes$r), 
+                                  phi1 = pca$efunctions[,1]), 
+                       aes(x = r, y = phi1)) +
+    geom_line() +
+    theme_light() +
+    ylim(-0.3,0.3) +
+    xlab("r [µm]")
+
+p_efunction2 <- ggplot(data.frame(r = unique(metricRes$r),
+                                  phi2 = pca$efunctions[,2]),
+                       aes(x = r, y = phi2)) +
+    geom_line() +
+    theme_light() +
+    ylim(-0.3,0.3) +
+    xlab("r [µm]")
+
+wrap_plots(list(p_mu, p_efunction1, p_efunction2), ncol = 3)
+# plot the biplot of the first two PCs
+plotFpca(dat = dat, res = pca, colourby = "condition")
+# print the eigenvalues
+evalues
+```
+
+In the biplot above we get a very basic differentiation of the $G$ curves. Onset T1D shows most variability along the first fPC. The second fPC describes less variation. 
+
+# Functional additive mixed models
+
+The $L$ function above showed no clear difference between the three conditions whereas the $G$ function showed a strong difference between onset T1D and the two other conditions. In order to test these differences we will use generalised functional additive mixed models. These are generalisations of standard additive mixed models to compare functions over their entire domain. The package that we use is the `r BiocStyle::CRANpkg('refund')` package [@scheiplFunctionalAdditiveMixed2015; @scheiplGeneralizedFunctionalAdditive2016; @refund2024].
+
+The model implemented here is of the form:
+
+$$
+\mathbb{E}[y_i(r)] = g(\alpha(r) + \beta_{0,g(i)}(r) + \sum_{j=1}^J f_j(X_{ji},r))
+$$
+
+With the following terms:
+
+- $y_i(r)$: functional response, here the `r BiocStyle::CRANpkg('spatstat')` curves
+
+- $g$: optional link function 
+
+- $\alpha(r)$: global functional intercept varying over the domain $r$
+
+- $\beta_{0,g(i)}(r)$: random functional intercept varying over the domain $r$ per grouping variable $g(i)$.
+
+- $f_j(X_{ji},r)$: additive predictors
+
+For the family we will use a scaled $t$-distribution with a logarithmic link function. This distribution has a positive support, thereby modelling the strictly positive response of the spatial statistics functions. 
+
+In this context we need to hnspecify a design matrix and contrasts. For the functional random intercepts we define a smooth function for each patient ID as implemented in `refund` [@refund2024].
+
+```{r funcGamG, fig.height=10, warning = FALSE}
+library('refund')
+# create a design matrix
+mm <- model.matrix(~condition, data = dat)
+colnames(mm)[1] <- "Intercept"
+mm %>% head()
+#>   Intercept conditionLong_duration conditionOnset
+#> 1         1                      1              0
+#> 2         1                      1              0
+#> 3         1                      1              0
+#> 4         1                      1              0
+#> 5         1                      1              0
+#> 6         1                      1              0
+
+r <- metricRes$r |> unique()
+# fit the model
+mdl <- functionalGam(
+    data = dat, x = r,
+    designmat = mm, weights = dat$npoints,
+    formula = formula(Y ~ 1 + conditionLong_duration +
+                          conditionOnset + s(patient_id, bs = "re")),
+    family = mgcv::scat(link = "log"),
+    algorithm = "gam"
+)
+summary(mdl)
+
+plotLs <- lapply(colnames(mm), plotMdl, mdl = mdl,
+                 shift = mdl$coefficients[["(Intercept)"]])
+wrap_plots(plotLs, nrow = 3, axes = 'collect')
+```
+
+
+We note that there is a small non-significant difference in the $G$ function between non-diabetic and long-duration T1D samples, but a strong difference between non-diabetic and onset T1D according to the model summary. The point wise confidence bands are a limitation of this method and could be improved with either bootstrapping or continuous confidence bands [@liebl2023fast]. Thus, we see not only that a spatial difference in co-localisation of $\alpha$ and cytotoxic T cells is statistically significant but also at which spatial scale this difference occurs.
+
+## Model evaluation
+
+One open problem is the implementation of confidence bands that reflect the non-independently and non-identically distributed residuals. To visualise how much of a problem this is, we can plot the contours of the correlation/covariance and look at model diagnostics.
+
+```{r contour, warning = FALSE}
+resid(mdl) |> cor() |> filled.contour(levels = seq(-1, 1, l = 40))
+resid(mdl) |> cov() |> filled.contour()
+
+qqnorm(resid(mdl), pch = 16)
+qqline(resid(mdl))
+```
+
+In these model diagnostics, we note that there is still some variability in the residuals that is not considered by the model. The Q-Q plot indicates a good but not perfect model fit. The residuals show a considerable structure that is in line with the structure in the auto-covariance / correlation plots.
+
+In the functional additive mixed model, we have hnspecified global intercept varying over the domain $r$ as well as functional random intercepts varying over the domain $r$ per grouping variable `patient_id`. We can plot these smooth estimates of the random intercepts.
+
+```{r intercept, warning = FALSE, eval = TRUE}
+# look at the smooth random intercepts per patient
+data <- coef(mdl)$smterms$`s(patient_id)`$coef
+
+data <- data %>% left_join(dat %>% 
+                             select(patient_id, condition) %>% unique)
+
+p <- ggplot(data, aes(x = x.vec, y = value, colour = condition, group = patient_id)) +
+  geom_line() +
+  theme_light() + 
+  geom_smooth(aes(group = 1), col = 'black') +
+  xlab("r [µm]")
+
+p
+```
+
+We note that these random errors are not constrained to sum-to-zero over the domain $r$. This can lead to problems of identifiability between the global intercept and the functional random intercepts. 
+
+```{r sessionInfo}
+sessionInfo()
+```
