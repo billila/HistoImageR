@@ -1,5 +1,5 @@
 ---
-title: "Reproduce spatialFDA vignette with H&E slide features"
+title: "Spatial statistics using H&E cell coordinates"
 author: "Sehyun Oh"
 date: "`r format(Sys.time(), '%B %d, %Y')`"
 vignette: >
@@ -14,6 +14,7 @@ output:
 editor_options: 
   markdown: 
     wrap: 72
+abstract: "Reproduce spatialFDA vignette with H&E slide features"
 ---
 
 ```{r setup, include = FALSE}
@@ -35,7 +36,7 @@ library("SpatialExperiment")
 library("curatedTCGAData")
 library("png")
 library("jsonlite")
-source("~/Projects/imageTCGAAnalyses/R/cellListToSE.R")
+devtools::load_all("~/Packages/HistoImageR/")
 
 set.seed(1234)
 ```
@@ -52,16 +53,6 @@ ovmeta <- colData(ovmae)
 ```
 
 ### H&E image features
-
-```{r eval=FALSE}
-datDir <- "~/Projects/imageTCGAAnalyses/data/demo_outputs/"
-fname <- "TCGA-23-1121-01Z-00-DX1.E2F25441-32C3-46BF-A845-CB4FA787E8CB.json"
-
-text_content <- readr::read_file(file.path(datDir, fname))
-json_data <- fromJSON(text_content)
-hnspe <- cellListToSE(json_data[[2]])
-```
-
 ```{r all_tcga_ov, echo=FALSE, eval=FALSE}
 ## Get JSON file names from url
 library(httr)
@@ -79,7 +70,7 @@ links <- page %>% html_nodes("a") %>% html_attr("href")
 tcga_files <- links[grepl("^TCGA-.*\\.json$", links)]
 ```
 
-```{r get_all_json_to_spe, echo=FALSE}
+```{r get_all_json_to_spe, echo=FALSE, eval=FALSE}
 hnPath <- "~/Projects/imageTCGAAnalyses/data/hovernet"
 for (tcga_file in tcga_files) {
     text_content <- readr::read_file(paste0(url, tcga_file))
@@ -88,13 +79,23 @@ for (tcga_file in tcga_files) {
 }
 ```
 
-
 Two example samples for demo:
 ```{r}
 fnames <- c("TCGA-23-1121-01Z-00-DX1.E2F25441-32C3-46BF-A845-CB4FA787E8CB",
             "TCGA-57-1582-01Z-00-DX1.BDF02DAA-E520-46BD-A479-58CAA4354B1A")
-pathToFiles <- "~/Projects/imageTCGAAnalyses/data/demo_outputs"
+fdir <- "~/Packages/HistoImageR/data/demo_outputs"
 ```
+
+```{r}
+spes_from_json <- importImgFeatures(file.path(fdir, paste0(fnames, ".json")), seed = 123)
+spes_from_h5ad <- importImgFeatures(file.path(fdir, paste0(fnames, ".h5ad")), seed = 123)
+```
+
+```{r}
+spes_from_json[[1]]
+metadata(spes_from_json[[1]])
+```
+
 
 ```{r}
 plot(imgRaster(getImg(spes[[1]])))

@@ -33,7 +33,6 @@ py_install("anndata")
 library(zellkonverter)
 library(SingleCellExperiment)
 library(SpatialExperiment)
-library(rjson)
 library(anndata)
 library(ggplot2)
 ```
@@ -41,14 +40,14 @@ library(ggplot2)
 
 # Load data
 ```{r}
-datDir <- "~/Projects/imageTCGAAnalyses/data/demo_outputs/"
+datDir <- "~/Packages/HistoImageR/data/demo_outputs/"
 fname <- "TCGA-23-1121-01Z-00-DX1.E2F25441-32C3-46BF-A845-CB4FA787E8CB.h5ad"
 h5ad_file <- file.path(datDir, fname)
 ```
 
 ## Load h5ad using anndata
 ```{r}
-ad <- read_h5ad(h5ad_file)
+system.time(ad <- read_h5ad(h5ad_file))
 ad
 ```
 
@@ -56,7 +55,7 @@ ad
 ## Load h5ad using zellkonverter
 ```{r}
 ## Create SingleCellExperiment object that points to on-disk H5AD file
-hn_sce <- readH5AD(h5ad_file, use_hdf5 = TRUE, reader = "R")
+system.time(hn_sce <- zellkonverter::readH5AD(h5ad_file, use_hdf5 = TRUE, reader = "R"))
 hn_sce
 ```
 
