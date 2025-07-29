@@ -3,6 +3,7 @@
 export(h5adToSe)
 export(importImgFeatures)
 export(jsonToSe)
+importFrom(MultiAssayExperiment,ExperimentList)
 importFrom(anndata,read_h5ad)
 importFrom(dplyr,rename)
 importFrom(jsonlite,fromJSON)

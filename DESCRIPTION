@@ -17,7 +17,8 @@ Imports:
   dplyr,
   jsonlite,
   readr,
-  stringr
+  stringr,
+  MultiAssayExperiment
 Suggests:
   ggplot2
 License: Artistic-2.0

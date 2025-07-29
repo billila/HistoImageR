@@ -19,3 +19,8 @@ TCGA image features into a `SpatialFeatureExperiment` object.
 FYI, DNA methylation data comes closest to having the most comprehensive 
 coverage across TCGA samples with diagnostic images.
 }
+\examples{
+# ovmae <- curatedTCGAData::curatedTCGAData("OV", "Methylation*", version = "2.0.1", dry.run = FALSE)
+# meta <- colData(ovmae)
+
+}

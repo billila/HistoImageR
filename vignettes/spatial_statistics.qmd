@@ -37,8 +37,6 @@ library("curatedTCGAData")
 library("png")
 library("jsonlite")
 devtools::load_all("~/Packages/HistoImageR/")
-
-set.seed(1234)
 ```
 
 # Getting started
@@ -58,7 +56,7 @@ ovmeta <- colData(ovmae)
 library(httr)
 library(rvest)
 
-url <- "https://u24-cancer-genomics.seandavi.workers.dev/hovernet/TCGA_OV/json/"
+url <- "https://u24-cancer-genomics.seandavi.workers.dev/hovernet/TCGA_OV/h5ad/"
 response <- GET(url)
 content <- content(response, "text")
 
@@ -67,17 +65,14 @@ page <- read_html(content)
 links <- page %>% html_nodes("a") %>% html_attr("href")
 
 # Filter for TCGA JSON files
-tcga_files <- links[grepl("^TCGA-.*\\.json$", links)]
+tcga_files <- links[grepl("^TCGA-.*\\.h5ad$", links)]
 ```
 
-```{r get_all_json_to_spe, echo=FALSE, eval=FALSE}
-hnPath <- "~/Projects/imageTCGAAnalyses/data/hovernet"
-for (tcga_file in tcga_files) {
-    text_content <- readr::read_file(paste0(url, tcga_file))
-    json_data <- fromJSON(text_content)
-    hnspe <- cellListToSE(json_data[[2]])
-}
+```{r}
+ov_fnames <- paste0(url, tcga_files)
+ov_se <- importImgFeatures(ov_fnames, seed = 123)
 ```
+
 
 Two example samples for demo:
 ```{r}
@@ -86,18 +81,28 @@ fnames <- c("TCGA-23-1121-01Z-00-DX1.E2F25441-32C3-46BF-A845-CB4FA787E8CB",
 fdir <- "~/Packages/HistoImageR/data/demo_outputs"
 ```
 
-```{r}
+```{r eval=FALSE}
 spes_from_json <- importImgFeatures(file.path(fdir, paste0(fnames, ".json")), seed = 123)
 spes_from_h5ad <- importImgFeatures(file.path(fdir, paste0(fnames, ".h5ad")), seed = 123)
 ```
 
-```{r}
-spes_from_json[[1]]
-metadata(spes_from_json[[1]])
+```{bash echo=FALSE, eval=FALSE}
+## Download TCGA-OV h5ad files
+wget -r -np -nH --cut-dirs=1 https://u24-cancer-genomics.seandavi.workers.dev/hovernet/TCGA_OV/h5ad/
 ```
 
-
 ```{r}
+dataDir <- "~/Packages/HistoImageR/data/hovernet/TCGA_OV/h5ad"
+h5ad_files <- list.files(dataDir)
+ovspes <- importImgFeatures(file.path(dataDir, h5ad_files), seed = 123, subsample_rate = 100)
+
+ovmae <- curatedTCGAData::curatedTCGAData("OV", "Methylation*", version = "2.0.1", dry.run = FALSE)
+meta <- colData(ovmae)
+res <- createMultiModalSpe(ovspes, meta)
+```
+
+```{r eval=FALSE}
+## [Working] enable the `importImgFeatures` function to take image file
 plot(imgRaster(getImg(spes[[1]])))
 ```
 
