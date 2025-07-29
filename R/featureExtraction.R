@@ -50,9 +50,9 @@ suppressPackageStartupMessages({
 #'   type = "epithelial"
 #' )
 #' nuclei_data <- list(nucleus1)  # Can contain multiple nuclei
-#' features <- extract_nuclei_features(nuclei_data)
+#' features <- extractNucleiFeatures(nuclei_data)
 #'
-extract_nuclei_features <- function(nuclei_list, 
+extractNucleiFeatures <- function(nuclei_list, 
                                     image_dims = c(1024, 1024), 
                                     verbose = TRUE) {
     
