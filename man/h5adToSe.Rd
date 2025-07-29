@@ -16,6 +16,9 @@ If you want to import all the cells, set this as `1`.}
 \item{seed}{Integer or NULL. Random seed for reproducible results. 
 If NULL (default), no seed is set and results will be random.}
 }
+\value{
+A SpatialExperiment object.
+}
 \description{
 Import Squidpy output (h5ad) as SpatialExperiment
 }

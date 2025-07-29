@@ -2,8 +2,7 @@
 #' 
 #' This function imports HoVerNet outputs (JSON) or Squidpy outputs (h5ad) as R list.
 #' 
-#' @import jsonlite
-#' @import SpatialExperiment
+#' @importFrom stringr str_extract
 #' 
 #' @param x A character vector containing file paths to image feature files.
 #' @param subsample_rate A numeric value >= 1. `1/subsample_rate` amount of 
@@ -11,6 +10,7 @@
 #' 
 #' @return An ExperimentList object containing SpatialExperiment objects (one per slide/sample)
 #' 
+#' @export
 importImgFeatures <- function(fnames, subsample_rate = 10, seed = NULL) {
   
   patientIDs <- stringr::str_extract(fnames, "TCGA-\\d{2}-\\d{4}")

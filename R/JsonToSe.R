@@ -12,8 +12,10 @@
 #' 
 #' @return A SpatialExperiment object
 #' 
-#'  
+#' @export
 jsonToSe <- function(fname, subsample_rate = subsample_rate, seed = seed) {
+    
+    ## Load JSON file as a list
     text_content <- readr::read_file(fname)
     json_data <- jsonlite::fromJSON(text_content)
     cell_list <- json_data[["nuc"]] # a list of nucleus

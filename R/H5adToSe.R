@@ -8,9 +8,10 @@
 #' If you want to import all the cells, set this as `1`.
 #' @param seed Integer or NULL. Random seed for reproducible results. 
 #' If NULL (default), no seed is set and results will be random.
+#'
+#' @return A SpatialExperiment object.
 #' 
-#' 
-#' 
+#' @export
 h5adToSe <- function(fname, subsample_rate = subsample_rate, seed = seed) {
     
     ann <- anndata::read_h5ad(fname)

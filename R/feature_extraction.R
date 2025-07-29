@@ -52,7 +52,6 @@ suppressPackageStartupMessages({
 #' nuclei_data <- list(nucleus1)  # Can contain multiple nuclei
 #' features <- extract_nuclei_features(nuclei_data)
 #'
-#' @export
 extract_nuclei_features <- function(nuclei_list, 
                                     image_dims = c(1024, 1024), 
                                     verbose = TRUE) {
