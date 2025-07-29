@@ -29,6 +29,8 @@ createMultiModalSpe <- function(x, meta) {
     colData(x[[i]]) <- mergedMeta
     colnames(x[[i]]) <- cellID
     
+    ## Store multi-omics assay data into metadata slot
+    
   }
   
   ## Combine all SpatialExperiment objects
