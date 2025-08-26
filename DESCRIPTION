@@ -1,7 +1,7 @@
 Package: HistoImageR
 Title: Incorporating extracted features from H&E images into R/Bioconductor ecosystem.
 Authors@R: c(
-  person("Sehyun", "Oh", email = "shbrief@gmail.com", role = c("aut","cre"))
+  person("Sehyun", "Oh", email = "shbrief@gmail.com", role = c("aut","cre")))
 Version: 0.99.0
 Date: 2025-7-29
 Description: This package provides functions to import extracted H&E image
